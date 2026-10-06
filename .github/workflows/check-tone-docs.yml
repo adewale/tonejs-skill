@@ -1,0 +1,96 @@
+# Weekly: check every claim in the skill against the current Tone.js releases.
+# - Links and API names are checked against each release's published API docs (tone.json).
+# - Behaviour probes run in headless Chromium against each release.
+# Drift opens an issue. A new npm "latest" that passes everything opens a pull request with bumped links.
+# For the pull request step, enable Settings → Actions → "Allow GitHub Actions to create and approve pull requests".
+name: Check skill against Tone.js
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths: ["skills/**", "tools/**", ".github/workflows/check-tone-docs.yml"]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [latest, next]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve the release for npm tag "${{ matrix.tag }}"
+        id: v
+        run: echo "version=$(npm view tone@${{ matrix.tag }} version)" >> "$GITHUB_OUTPUT"
+
+      - name: Install that release and a browser
+        run: |
+          mkdir -p "$RUNNER_TEMP/t" && cd "$RUNNER_TEMP/t"
+          npm init -y > /dev/null
+          npm i --no-audit --no-fund "tone@${{ steps.v.outputs.version }}" playwright
+          npx playwright install --with-deps chromium
+
+      - name: Check links and API names against the API docs
+        id: links
+        continue-on-error: true
+        run: node tools/check-skill.mjs --version "${{ steps.v.outputs.version }}" --sources | tee "$RUNNER_TEMP/links.txt"
+
+      - name: Run the behaviour probes
+        id: probes
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/t
+        run: node "$GITHUB_WORKSPACE/skills/tonejs/scripts/run-probes.mjs" | tee "$RUNNER_TEMP/probes.txt"
+
+      - name: Open an issue on drift
+        if: (steps.links.outcome == 'failure' || steps.probes.outcome == 'failure') && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          title="Skill out of date for tone $V (npm ${{ matrix.tag }})"
+          if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')" ]; then exit 0; fi
+          {
+            echo "The weekly check found claims that no longer match Tone.js $V. The docs win: fix or remove each claim, then re-run."
+            echo; echo "### Links and API names"; echo '```'; cat "$RUNNER_TEMP/links.txt"; echo '```'
+            echo; echo "### Behaviour probes"; echo '```'; cat "$RUNNER_TEMP/probes.txt"; echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Repoint links at a new npm latest
+        id: bump
+        if: matrix.tag == 'latest' && github.event_name != 'pull_request' && steps.links.outcome == 'success' && steps.probes.outcome == 'success'
+        env:
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          pinned=$(grep -o 'Links below point at [0-9][0-9.]*[0-9]' skills/tonejs/SKILL.md | awk '{print $5}')
+          if [ "$pinned" = "$V" ]; then echo "Already pinned to $V"; exit 0; fi
+          node tools/check-skill.mjs --bump "$V"
+          sed -i "s/^Claims last checked on .*/Claims last checked on $(date -u +%F) against tone $V (npm \`latest\`) by the weekly workflow: every link and API name exists and all probes pass./" skills/tonejs/SKILL.md
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open a pull request
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bump-tone-${{ steps.v.outputs.version }}
+          commit-message: Point the Tone.js skill at tone ${{ steps.v.outputs.version }}
+          title: Point the Tone.js skill at tone ${{ steps.v.outputs.version }}
+          body: |
+            Tone.js ${{ steps.v.outputs.version }} is now npm `latest`. Every API link and name in the skill exists in its published docs, and all behaviour probes pass, so the pinned links were moved to it.
+
+            Before merging, read the release notes for anything the skill should now say or stop saying: https://github.com/Tonejs/Tone.js/releases
+
+      - name: Fail the run on drift
+        if: steps.links.outcome == 'failure' || steps.probes.outcome == 'failure'
+        run: exit 1

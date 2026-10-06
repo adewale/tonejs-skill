@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tone.js behaviour probes</title>
+<style>
+  body { font: 15px/1.45 system-ui, sans-serif; margin: 24px auto; max-width: 860px; padding: 0 16px; color: #1d1d1f; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e8e8ea; background: #161618; } td, th { border-color: #333 !important; } }
+  table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+  td, th { border-bottom: 1px solid #ddd; padding: 8px 6px; text-align: left; vertical-align: top; }
+  code { font: 13px ui-monospace, monospace; }
+  .pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; }
+  button { font: inherit; padding: 8px 16px; }
+</style>
+</head>
+<body>
+<h1>Tone.js behaviour probes</h1>
+<p>Checks the claims in this skill that the API reference does not state, against a real Tone.js build.
+Choose a version with <code>?version=15.1.22</code> (loaded from jsDelivr) or a local build with <code>?src=../node_modules/tone/build/Tone.js</code>.</p>
+<p><button id="run" disabled>Loading Tone.js…</button> <span id="summary"></span></p>
+<table><thead><tr><th>Result</th><th>Probe</th><th>Claim and measurement</th></tr></thead><tbody id="out"></tbody></table>
+<script>
+  const q = new URLSearchParams(location.search);
+  const src = q.get('src') || `https://cdn.jsdelivr.net/npm/tone@${q.get('version') || 'latest'}/build/Tone.js`;
+  const load = (url) => new Promise((ok, fail) => { const s = document.createElement('script'); s.src = url; s.onload = ok; s.onerror = () => fail(new Error('Could not load ' + url)); document.head.append(s); });
+  const btn = document.getElementById('run'), out = document.getElementById('out'), summary = document.getElementById('summary');
+  load(src).then(() => load('probes.js')).then(() => {
+    btn.disabled = false; btn.textContent = `Run ${window.TONE_PROBES.length} probes on Tone.js ${Tone.version}`;
+  }).catch(e => { btn.textContent = e.message; });
+  btn.onclick = async () => {
+    btn.disabled = true; out.textContent = '';
+    await Tone.start();                       // inside the click: unlocks audio
+    let failed = 0;
+    for (const p of window.TONE_PROBES) {
+      let r; try { r = await p.run(); } catch (e) { r = { pass: false, detail: 'probe crashed: ' + e.message }; }
+      if (!r.pass) failed++;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</td><td><code></code></td><td></td>`;
+      tr.children[1].firstChild.textContent = p.id;
+      tr.children[2].textContent = `${p.claim} — ${r.detail}`;
+      out.append(tr);
+    }
+    summary.textContent = failed ? `${failed} claim(s) no longer hold for ${Tone.version}: follow the docs, then update the skill.` : `All claims hold for ${Tone.version}.`;
+    btn.disabled = false;
+  };
+</script>
+</body>
+</html>

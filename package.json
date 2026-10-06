@@ -1,0 +1,26 @@
+{
+  "name": "tonejs-skill",
+  "version": "0.1.0",
+  "description": "An agent skill for writing, debugging and testing browser audio code with Tone.js",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adewale/tonejs-skill.git"
+  },
+  "homepage": "https://github.com/adewale/tonejs-skill#readme",
+  "bugs": "https://github.com/adewale/tonejs-skill/issues",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node tools/check-skill.mjs --sources",
+    "check:next": "node tools/check-skill.mjs --sources --version \"$(npm view tone@next version)\"",
+    "probes": "node skills/tonejs/scripts/run-probes.mjs",
+    "tonedoc": "node skills/tonejs/scripts/tonedoc.mjs",
+    "test": "npm run check && npm run probes"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0",
+    "tone": "^15.1.22"
+  }
+}
